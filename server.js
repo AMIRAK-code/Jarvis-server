@@ -4,7 +4,7 @@ const http = require('http');
 // 1. Setup the Server
 const PORT = process.env.PORT || 8080;
 const server = http.createServer((req, res) => {
-    // Simple health check for Render
+    // Simple health check for Render to confirm app is alive
     res.writeHead(200);
     res.end('Jarvis Backend is Running');
 });
@@ -32,12 +32,12 @@ wss.on('connection', (clientWs) => {
 
     const API_KEY = getCleanApiKey();
     if (!API_KEY) {
+        console.error("Closing connection due to missing API Key.");
         clientWs.close();
         return;
     }
 
     // 3. Connect to Google Gemini
-    // We construct the URL dynamically with the clean key
     const geminiUrl = `wss://generativelanguage.googleapis.com/v1beta/${MODEL}:bidiWrite?key=${API_KEY}`;
     
     const geminiWs = new WebSocket(geminiUrl);
@@ -54,7 +54,7 @@ wss.on('connection', (clientWs) => {
                     speech_config: {
                         voice_config: {
                             prebuilt_voice_config: {
-                                voice_name: "Kore" // Options: "Puck", "Charon", "Kore", "Fenrir"
+                                voice_name: "Kore"
                             }
                         }
                     }
@@ -87,3 +87,20 @@ wss.on('connection', (clientWs) => {
     geminiWs.on('error', (error) => {
         console.error("Gemini Error:", error.message);
     });
+
+    geminiWs.on('close', () => {
+        console.log("Gemini connection closed.");
+    });
+
+    clientWs.on('close', () => {
+        console.log("Client disconnected.");
+        if (geminiWs.readyState === WebSocket.OPEN) {
+            geminiWs.close();
+        }
+    });
+});
+
+// Start the server
+server.listen(PORT, () => {
+    console.log(`Server listening on port ${PORT}`);
+});
