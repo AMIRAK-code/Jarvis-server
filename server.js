@@ -1,10 +1,9 @@
 const WebSocket = require('ws');
 const http = require('http');
 
-// 1. Setup the Server
+// 1. Setup the Server (Required for Render Health Checks)
 const PORT = process.env.PORT || 8080;
 const server = http.createServer((req, res) => {
-    // Simple health check for Render to confirm app is alive
     res.writeHead(200);
     res.end('Jarvis Backend is Running');
 });
@@ -14,18 +13,16 @@ const wss = new WebSocket.Server({ server });
 // 2. Configuration
 const MODEL = "models/gemini-2.0-flash-exp";
 
-// --- FIX: API Key Cleaning Function ---
-// This automatically removes spaces, "quotes", or 'quotes' that cause Error 400
+// --- HELPER: Clean API Key ---
+// Removes invisible spaces or quotes that cause Error 400
 function getCleanApiKey() {
     let key = process.env.GEMINI_API_KEY;
     if (!key) {
         console.error("CRITICAL ERROR: GEMINI_API_KEY is missing in Render Settings!");
         return null;
     }
-    // Remove all spaces, double quotes, and single quotes
     return key.replace(/["'\s]/g, ""); 
 }
-// --------------------------------------
 
 wss.on('connection', (clientWs) => {
     console.log("Client connected. Attempting to connect to Gemini...");
@@ -45,7 +42,7 @@ wss.on('connection', (clientWs) => {
     geminiWs.on('open', () => {
         console.log("SUCCESS: Connected to Gemini API!");
         
-        // 4. Send Initial 'Handshake' with Jarvis Personality
+        // A. Send Initial Setup (Personality)
         const setupMessage = {
             setup: {
                 model: MODEL,
@@ -54,7 +51,7 @@ wss.on('connection', (clientWs) => {
                     speech_config: {
                         voice_config: {
                             prebuilt_voice_config: {
-                                voice_name: "Kore"
+                                voice_name: "Kore" // "Kore", "Charon", "Puck", "Fenrir"
                             }
                         }
                     }
@@ -67,16 +64,28 @@ wss.on('connection', (clientWs) => {
             }
         };
         geminiWs.send(JSON.stringify(setupMessage));
+
+        // B. Send "Kickstart" Message (Force him to speak first)
+        const firstMessage = {
+            client_content: {
+                turns: [{
+                    role: "user",
+                    parts: [{ text: "System check. Are you online?" }]
+                }],
+                turn_complete: true
+            }
+        };
+        geminiWs.send(JSON.stringify(firstMessage));
     });
 
-    // 5. Pipe Audio: Client (Mic) -> Gemini
+    // 4. Pipe Audio: Client (Mic) -> Gemini
     clientWs.on('message', (data) => {
         if (geminiWs.readyState === WebSocket.OPEN) {
             geminiWs.send(data);
         }
     });
 
-    // 6. Pipe Audio: Gemini -> Client (Speakers)
+    // 5. Pipe Audio: Gemini -> Client (Speakers)
     geminiWs.on('message', (data) => {
         if (clientWs.readyState === WebSocket.OPEN) {
             clientWs.send(data);
