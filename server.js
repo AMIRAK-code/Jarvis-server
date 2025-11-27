@@ -1,26 +1,51 @@
 const WebSocket = require('ws');
-const dotenv = require('dotenv');
+const http = require('http');
 
-dotenv.config();
-
+// 1. Setup the Server
 const PORT = process.env.PORT || 8080;
-const wss = new WebSocket.Server({ port: PORT });
+const server = http.createServer((req, res) => {
+    // Simple health check for Render
+    res.writeHead(200);
+    res.end('Jarvis Backend is Running');
+});
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const MODEL = "models/gemini-2.0-flash-exp"; 
-const GEMINI_URL = `wss://generativelanguage.googleapis.com/v1beta/${MODEL}:bidiWrite?key=${GEMINI_API_KEY}`;
+const wss = new WebSocket.Server({ server });
 
-console.log(`Jarvis Backend running on port ${PORT}`);
+// 2. Configuration
+const MODEL = "models/gemini-2.0-flash-exp";
+
+// --- FIX: API Key Cleaning Function ---
+// This automatically removes spaces, "quotes", or 'quotes' that cause Error 400
+function getCleanApiKey() {
+    let key = process.env.GEMINI_API_KEY;
+    if (!key) {
+        console.error("CRITICAL ERROR: GEMINI_API_KEY is missing in Render Settings!");
+        return null;
+    }
+    // Remove all spaces, double quotes, and single quotes
+    return key.replace(/["'\s]/g, ""); 
+}
+// --------------------------------------
 
 wss.on('connection', (clientWs) => {
-    console.log("Client connected. Initializing Jarvis...");
+    console.log("Client connected. Attempting to connect to Gemini...");
 
-    const geminiWs = new WebSocket(GEMINI_URL);
+    const API_KEY = getCleanApiKey();
+    if (!API_KEY) {
+        clientWs.close();
+        return;
+    }
+
+    // 3. Connect to Google Gemini
+    // We construct the URL dynamically with the clean key
+    const geminiUrl = `wss://generativelanguage.googleapis.com/v1beta/${MODEL}:bidiWrite?key=${API_KEY}`;
+    
+    const geminiWs = new WebSocket(geminiUrl);
 
     geminiWs.on('open', () => {
-        console.log("Connected to Gemini.");
+        console.log("SUCCESS: Connected to Gemini API!");
         
-        // Initial "Handshake" with Jarvis Personality
+        // 4. Send Initial 'Handshake' with Jarvis Personality
         const setupMessage = {
             setup: {
                 model: MODEL,
@@ -29,14 +54,14 @@ wss.on('connection', (clientWs) => {
                     speech_config: {
                         voice_config: {
                             prebuilt_voice_config: {
-                                voice_name: "Kore" // Deep, authoritative voice
+                                voice_name: "Kore" // Options: "Puck", "Charon", "Kore", "Fenrir"
                             }
                         }
                     }
                 },
                 system_instruction: {
                     parts: [{
-                        text: "You are J.A.R.V.I.S, a sophisticated AI assistant. Your tone is calm, British, robotic, and concise. You address the user as 'Sir'. You are helpful but dry. Keep responses short. Do not use markdown."
+                        text: "You are J.A.R.V.I.S, a sophisticated AI assistant. Your tone is calm, British, robotic, and concise. Address the user as 'Sir'. Keep responses short and efficient."
                     }]
                 }
             }
@@ -44,22 +69,21 @@ wss.on('connection', (clientWs) => {
         geminiWs.send(JSON.stringify(setupMessage));
     });
 
-    // Forward Audio: Client -> Gemini
+    // 5. Pipe Audio: Client (Mic) -> Gemini
     clientWs.on('message', (data) => {
         if (geminiWs.readyState === WebSocket.OPEN) {
             geminiWs.send(data);
         }
     });
 
-    // Forward Audio: Gemini -> Client
+    // 6. Pipe Audio: Gemini -> Client (Speakers)
     geminiWs.on('message', (data) => {
         if (clientWs.readyState === WebSocket.OPEN) {
             clientWs.send(data);
         }
     });
 
-    // Cleanup
-    clientWs.on('close', () => geminiWs.close());
-    geminiWs.on('close', () => clientWs.close());
-    geminiWs.on('error', (err) => console.error("Gemini Error:", err));
-});
+    // Error Handling
+    geminiWs.on('error', (error) => {
+        console.error("Gemini Error:", error.message);
+    });
